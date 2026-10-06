@@ -195,3 +195,73 @@ test("a refresh that rejects after cleanup is consumed without notification", as
   assert.deepEqual(fixture.notices, []);
   assert.equal(container.children.length, 0);
 });
+
+test("failed refresh while mounted notifies error and restores button state", async () => {
+  globalThis.document = { createElement: (tagName) => new MockElement(tagName) };
+  const container = new MockElement("main");
+  const fixture = makeApi(container);
+  fixture.api = Object.freeze({
+    ...fixture.api,
+    invoke: async (method, params) => {
+      fixture.calls.push([method, params]);
+      throw new Error("refresh failed");
+    },
+  });
+  const cleanup = mount(container, fixture.api);
+  const refresh = container.children.at(-1);
+
+  await refresh.click();
+
+  assert.deepEqual(fixture.calls, [["refresh", {}]]);
+  assert.deepEqual(fixture.notices, [["Example dashboard refresh failed", "error"]]);
+  assert.equal(refresh.disabled, false);
+  cleanup();
+});
+
+test("render snapshot appends each review to the review list", async () => {
+  globalThis.document = { createElement: (tagName) => new MockElement(tagName) };
+  const container = new MockElement("main");
+  const fixture = makeApi(container);
+  const cleanup = mount(container, fixture.api);
+  const reviewsList = container.children.find((child) => child.className === "example-dashboard-reviews");
+
+  assert.equal(reviewsList.children.length, 0);
+
+  const snapshot = {
+    summary: { open_reviews: 2, waiting_on_me: 1, ci_passing: 1 },
+    reviews: [
+      { id: "rev-1", title: "Review Alpha", repository: "example/repo-a", status: "ready" },
+      { id: "rev-2", title: "Review Beta", repository: "example/repo-b", status: "ci" },
+    ],
+  };
+
+  fixture.listeners.get("refreshed")(snapshot);
+
+  assert.equal(reviewsList.children.length, 2);
+  const [first, second] = reviewsList.children;
+  assert.equal(first.children[0].textContent, "Review Alpha");
+  assert.equal(first.children[1].textContent, "example/repo-a · ready");
+  assert.equal(second.children[0].textContent, "Review Beta");
+  assert.equal(second.children[1].textContent, "example/repo-b · ci");
+
+  cleanup();
+});
+
+test("navigation is ignored when signal is aborted or after unmount", async () => {
+  globalThis.document = { createElement: (tagName) => new MockElement(tagName) };
+  const container = new MockElement("main");
+  const fixture = makeApi(container);
+  const cleanup = mount(container, fixture.api);
+  const navigate = container.children.find((child) => child.tagName === "button" && child.textContent === "Open dashboard");
+
+  // Navigation while aborted should not call api.navigate
+  fixture.controller.abort();
+  await navigate.click();
+  assert.deepEqual(fixture.navigations, []);
+
+  // Navigation after unmount should not call api.navigate
+  cleanup();
+  await navigate.click();
+  assert.deepEqual(fixture.navigations, []);
+});
+
